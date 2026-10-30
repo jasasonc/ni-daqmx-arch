@@ -60,7 +60,9 @@ cmd_doctor() {
   echo "Services"
   local u
   for u in "${UNITS[@]}"; do
-    systemctl is-active -q $u && ok "$u running" || { bad "$u not running"; hint "journalctl -b -u $u"; }
+    if systemctl is-active -q $u; then ok "$u running"
+    elif [[ -f $VM_RULE ]]; then warn "$u stopped (the ni-daq VM has the hardware)"
+    else bad "$u not running"; hint "journalctl -b -u $u"; fi
   done
 
   echo "Hardware"
@@ -179,7 +181,11 @@ cmd_update() {
   if (( driver_changed )); then
     # try-restart on upgrades: leaves the services off while the hardware is
     # handed to the VM (mode vm). A first install starts them.
-    if (( fresh )); then sudo systemctl start "${UNITS[@]}"
+    if (( fresh )) && [[ -f $VM_RULE ]]; then
+      # The ni-daq VM takes NI USB hardware on this machine: leave the services off,
+      # as `mode vm` does, so nidrum does not claim the chassis now or at boot.
+      sudo systemctl disable --now "${UNITS[@]}" >/dev/null 2>&1
+    elif (( fresh )); then sudo systemctl start "${UNITS[@]}"
     else sudo systemctl try-restart "${UNITS[@]}"; fi
   fi
   echo
@@ -191,10 +197,19 @@ cmd_mode() {
     native)
       [[ -f $VM_RULE ]] && sudo mv "$VM_RULE" "$VM_RULE.disabled"
       sudo udevadm control --reload
-      virsh -c qemu:///system list --name 2>/dev/null | grep -qx ni-daq \
-        && virsh -c qemu:///system shutdown ni-daq >/dev/null
+      if virsh -c qemu:///system list --name 2>/dev/null | grep -qx ni-daq; then
+        virsh -c qemu:///system shutdown ni-daq >/dev/null
+        # shutdown only asks the guest to stop: wait until it has released the chassis,
+        # or nidrum starts while the VM still holds it.
+        local i
+        for ((i = 0; i < 60; i++)); do
+          [[ $(virsh -c qemu:///system domstate ni-daq 2>/dev/null) == "shut off" ]] && break
+          sleep 1
+        done
+        ((i < 60)) || echo "Warning: the ni-daq VM did not shut down within 60 s"
+      fi
       sudo systemctl enable --now "${UNITS[@]}" >/dev/null 2>&1
-      echo "NI hardware now stays on this machine. Re-plug it, then: ni-daqmx-arch doctor" ;;
+      echo "NI hardware now stays on this machine. Check with: ni-daqmx-arch test (re-plug it if it is not listed)" ;;
     vm)
       [[ -f $VM_RULE.disabled ]] && sudo mv "$VM_RULE.disabled" "$VM_RULE"
       sudo udevadm control --reload
