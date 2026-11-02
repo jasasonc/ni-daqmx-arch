@@ -5,20 +5,31 @@
 > [AI disclosure](#ai-disclosure). It installs proprietary kernel modules as
 > root, so read the scripts before running them.
 
-Install National Instruments NI-DAQmx natively on Arch Linux and Arch-based
-distributions (Omarchy, EndeavourOS, Manjaro, ...), on whatever kernel you run.
+Run National Instruments NI-DAQmx on Arch Linux and Arch-based distributions
+(Omarchy, EndeavourOS, Manjaro, ...), on whatever kernel you run. NI ships
+NI-DAQmx only for RHEL, openSUSE and Ubuntu LTS. This repository offers two
+ways around that, both driven by one command, `ni-daq`:
 
-NI ships NI-DAQmx only for RHEL, openSUSE and Ubuntu LTS, and tests its kernel
-modules against those distributions' kernels. This repackages NI's official,
-signed Ubuntu 24.04 packages as pacman packages, and has DKMS (the system that
-recompiles out-of-tree kernel modules) build NI's modules for every kernel you
-have installed, again after every kernel update.
+- **Native** (the default, most of this README): NI's driver installed
+  directly on Arch. Your Python uses the standard `nidaqmx` package.
+- **VM** (the fallback, [`vm/`](vm/README.md)): NI's driver in a headless
+  Ubuntu VM that owns the USB chassis. Your Python reaches it over NI's gRPC
+  device server, with no NI software on the host.
+
+`ni-daq mode native` / `ni-daq mode vm` hands the chassis to one or the other.
+
+## How the native install works
+
+NI tests its kernel modules only against its supported distributions' kernels.
+This repackages NI's official, signed Ubuntu 24.04 packages as pacman packages,
+and has DKMS (the system that recompiles out-of-tree kernel modules) build NI's
+modules for every kernel you have installed, again after every kernel update.
 
 ```
 NI's apt repository (Ubuntu 24.04)           your Arch machine
 ----------------------------------           -----------------
 142 signed .deb packages  ── download, ───►  ni-daqmx        (NI's files, pacman-owned)
-pinned by SHA-256            repackage       ni-daqmx-arch   (helper command + hook)
+pinned by SHA-256            repackage       ni-daqmx-arch   (ni-daq command + hook)
                                                   │
                                              DKMS: 48 kernel modules, built per kernel
                                                   │
@@ -53,7 +64,7 @@ minutes:
 4. downloads NI's packages (~280 MB, cached in `~/.cache/ni-daqmx-arch`),
    checks them against the pinned SHA-256 sums, builds both packages and
    installs them;
-5. starts NI's services and runs `ni-daqmx-arch doctor`.
+5. starts NI's services and runs `ni-daq doctor`.
 
 Requires an x86_64 Arch-based system. By installing you accept NI's license
 terms for NI-DAQmx (<https://www.ni.com/linux/>).
@@ -61,8 +72,8 @@ terms for NI-DAQmx (<https://www.ni.com/linux/>).
 ## Use
 
 ```bash
-ni-daqmx-arch doctor     # is everything working?
-ni-daqmx-arch test       # list NI devices through Python's nidaqmx
+ni-daq doctor     # is everything working? (also what a bare `ni-daq` runs)
+ni-daq test       # list NI devices through Python's nidaqmx
 ```
 
 | Command | What it does |
@@ -73,7 +84,8 @@ ni-daqmx-arch test       # list NI devices through Python's nidaqmx
 | `start` | Loads the kernel modules and starts NI's services without a reboot. |
 | `build-modules` | Builds any NI modules still missing, for every installed kernel. |
 | `rebuild` | Force-rebuilds all NI modules for the running kernel. |
-| `mode native` / `mode vm` | Switches NI USB hardware between this machine and the [ni-daq VM](#alternative-ni-daqmx-in-a-vm), if you also use that. |
+| `mode native` / `mode vm` | Switches NI USB hardware between this machine and the [ni-daq VM](#alternative-ni-daqmx-in-a-vm), if you also use that. Needs a terminal, for sudo. |
+| `vm <command>` | Drives the VM: `up`, `down`, `status`, `attach`, `release`, `reset`, `ssh`, `log`. `up`, `down` and `attach` also work without the `vm`. See [`vm/README.md`](vm/README.md). |
 | `uninstall` | Removes both packages and the state they created. |
 
 Python code uses the standard `nidaqmx` package; nothing here changes its API.
@@ -83,12 +95,12 @@ Python code uses the standard `nidaqmx` package; nothing here changes its API.
 Nothing to do. When pacman installs a new kernel, DKMS rebuilds the NI modules
 for it, and a hook then checks the result. If a module fails to build, the
 update prints a warning naming the kernel, and your other kernels keep working.
-Run `ni-daqmx-arch doctor` after rebooting; the report contains the compiler
+Run `ni-daq doctor` after rebooting; the report contains the compiler
 error.
 
 ## When something breaks
 
-Run `ni-daqmx-arch doctor` and look at `~/ni-daqmx-report.txt`. It collects
+Run `ni-daq doctor` and look at `~/ni-daqmx-report.txt`. It collects
 the versions, DKMS state, failed build logs, service status and NI-related
 kernel messages, which is everything needed to diagnose a problem. Attach it
 to an issue.
@@ -105,8 +117,9 @@ interface changes with `#if LINUX_VERSION_CODE >= KERNEL_VERSION(...)`, as
 USB chassis, and your Python on the host talks to it over NI's gRPC device
 server. No NI software is installed on the host. Use it as a fallback when a
 new kernel breaks `nikal` before a patch exists, or to reach the hardware from
-another machine. Both can be installed side by side; `ni-daqmx-arch mode
-native` / `mode vm` decides which one gets the chassis.
+another machine. Set it up with `vm/setup.sh`; it is not part of `install.sh`.
+Both can be installed side by side; `ni-daq mode native` / `mode vm` decides
+which one gets the chassis.
 
 ## Repository layout
 
@@ -114,7 +127,7 @@ native` / `mode vm` decides which one gets the chassis.
 |---|---|
 | `install.sh` | The one-line installer. |
 | `ni-daqmx/` | The driver package: PKGBUILD, the `nikal` patch, and the steps NI's Debian install scripts perform, redone for pacman (`ni-daqmx.install`, sysusers, tmpfiles). |
-| `ni-daqmx-arch/` | The helper command and the pacman hook. A separate package, so changing it never rebuilds the kernel modules. |
+| `ni-daqmx-arch/` | The `ni-daq` helper command and the pacman hook. A separate package, so changing it never rebuilds the kernel modules. |
 | `tools/update-sources` | Pins an NI release into `ni-daqmx/PKGBUILD`. |
 | `keys/` | NI's public package-signing key. |
 | `vm/` | The VM alternative: its own `setup.sh`, host and guest scripts, and the `ni-daq` command. |
@@ -128,7 +141,7 @@ tools/update-sources 2027/Q1
 This downloads NI's signed package index for that release, verifies it with
 NI's key, works out every package `ni-daqmx` needs, and rewrites the pinned
 list and checksums in `ni-daqmx/PKGBUILD`. Bump `pkgrel`, commit, and run
-`ni-daqmx-arch update`.
+`ni-daq update`.
 
 ## How it differs from NI's Ubuntu install
 
