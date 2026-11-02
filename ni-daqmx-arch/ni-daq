@@ -199,7 +199,7 @@ cmd_update() {
   fi
   if (( driver_changed )); then
     # try-restart on upgrades: leaves the services off while the hardware is
-    # handed to the VM (mode vm). A first install starts them.
+    # handed to the VM (mode vm). A first install starts them, unless the VM has the hardware.
     if (( fresh )) && [[ -f $VM_RULE ]]; then
       # The ni-daq VM takes NI USB hardware on this machine: leave the services off,
       # as `mode vm` does, so nidrum does not claim the chassis now or at boot.
