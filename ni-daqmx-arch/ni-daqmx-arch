@@ -191,8 +191,21 @@ cmd_mode() {
     native)
       [[ -f $VM_RULE ]] && sudo mv "$VM_RULE" "$VM_RULE.disabled"
       sudo udevadm control --reload
-      virsh -c qemu:///system list --name 2>/dev/null | grep -qx ni-daq \
-        && virsh -c qemu:///system shutdown ni-daq >/dev/null
+      if virsh -c qemu:///system list --name 2>/dev/null | grep -qx ni-daq; then
+        virsh -c qemu:///system shutdown ni-daq >/dev/null
+        # The VM drops the chassis only once it is off. If that happens while NI's
+        # services start up, nidevldu and nidrum can hang in the kernel until reboot.
+        local i
+        for (( i = 0; i < 60; i++ )); do
+          virsh -c qemu:///system list --name 2>/dev/null | grep -qx ni-daq || break
+          sleep 1
+        done
+        if (( i == 60 )); then
+          echo "The ni-daq VM is still running. Stop it, then run: ni-daqmx-arch mode native"
+          exit 1
+        fi
+        sleep 3  # let the chassis re-enumerate on the host
+      fi
       sudo systemctl enable --now "${UNITS[@]}" >/dev/null 2>&1
       echo "NI hardware now stays on this machine. Re-plug it, then: ni-daqmx-arch doctor" ;;
     vm)
