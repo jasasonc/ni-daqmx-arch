@@ -117,9 +117,21 @@ interface changes with `#if LINUX_VERSION_CODE >= KERNEL_VERSION(...)`, as
 USB chassis, and your Python on the host talks to it over NI's gRPC device
 server. No NI software is installed on the host. Use it as a fallback when a
 new kernel breaks `nikal` before a patch exists, or to reach the hardware from
-another machine. Set it up with `vm/setup.sh`; it is not part of `install.sh`.
+another machine.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ladisk/ni-daqmx-arch/main/install.sh | bash -s vm
+```
+
+This asks for your sudo password once and runs for 20-30 minutes, mostly
+downloads. It installs libvirt and QEMU, downloads the Ubuntu image, creates
+the VM, installs NI-DAQmx and NI's gRPC server inside it, and sets up the USB
+passthrough. Then log out and back in once, and run `ni-daq vm up`. Details
+are in [`vm/README.md`](vm/README.md).
+
 Both can be installed side by side; `ni-daq mode native` / `mode vm` decides
-which one gets the chassis.
+which one gets the chassis. If the native install is present, the VM install
+switches to `mode vm` first.
 
 ## Repository layout
 

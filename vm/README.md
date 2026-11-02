@@ -30,17 +30,33 @@ NI-9232, acquiring through LDAQ at 25.6 kHz.
 ## Install
 
 ```bash
-git clone https://github.com/ladisk/ni-daqmx-arch && cd ni-daqmx-arch/vm
-./setup.sh
+curl -fsSL https://raw.githubusercontent.com/ladisk/ni-daqmx-arch/main/install.sh | bash -s vm
 ```
 
-Roughly 20-30 minutes, mostly downloads. Stages are idempotent and can be run
-individually — `./setup.sh --list`, then e.g. `./setup.sh guest verify`.
+Roughly 20-30 minutes, mostly downloads. It clones this repository to
+`~/.local/share/ni-daqmx-arch` and runs `vm/setup.sh`, which goes through these
+stages:
+
+| Stage | What it does |
+|---|---|
+| `host-deps` | Installs QEMU, libvirt, `uv` and friends; starts libvirt's default NAT network; adds you to the `libvirt` group. |
+| `ufw` | Lets the guest's DHCP and DNS through ufw, if ufw is installed. |
+| `image` | Downloads the Ubuntu 24.04 cloud image (~600 MB). |
+| `vm` | Creates an SSH key and the `ni-daq` VM, and adds it to `~/.ssh/config`. |
+| `guest` | Inside the VM: pins kernel 6.14, installs NI-DAQmx, installs NI's gRPC device server. |
+| `udev` | Installs the udev rule and `ni-daq-usb`, which hand the chassis to the VM. |
+| `control` | Puts `ni-daq-vm` on your PATH (and `ni-daq`, if the native install is absent). |
+| `client` | Builds the host-side Python venv (`nidaqmx`, LDAQ) in `vm/.venv`. |
+| `verify` | Lists devices over gRPC. |
+
+Every stage is idempotent: re-run one with
+`~/.local/share/ni-daqmx-arch/vm/setup.sh <stage>`. Log out and back in once
+afterwards, so the `libvirt` group applies, then `ni-daq vm up`.
 
 The guest account is named after your host username; set `GUEST_USER=...` before
 `./setup.sh` if you want a different one.
 
-Requires: an Arch host with KVM, `uv`, and sudo.
+Requires: an Arch host with KVM and sudo.
 
 ## Use
 
