@@ -1,0 +1,314 @@
+#!/usr/bin/env bash
+# Start and stop the ni-daq measurement VM by hand. Run as `ni-daq vm <command>`;
+# up, down and attach also work without the `vm`.
+#
+# The VM deliberately does NOT autostart: it holds ~2 GB of RAM and is only
+# useful when the NI chassis is plugged in. Bring it up when you want to
+# measure, drop it when you are done.
+#
+#   ni-daq vm up        start the VM, wait for the gRPC server, attach the chassis
+#   ni-daq vm down      shut it down cleanly
+#   ni-daq vm status    what is running, and does the driver see the hardware
+#   ni-daq vm attach    re-attach the chassis without restarting anything
+#   ni-daq vm release   drop orphaned gRPC sessions that still hold the hardware
+#   ni-daq vm reset     restart the gRPC server (heavier; use if it stops answering)
+#   ni-daq vm ssh       shell into the guest, or run a command there
+#   ni-daq vm log       tail the USB attach log
+set -uo pipefail
+
+VM=ni-daq
+IP=192.168.122.50
+PORT=31763
+VIRSH="virsh -c qemu:///system"
+REPO="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+VENV="$REPO/.venv/bin/python"
+BOOT_TIMEOUT=90
+STOP_TIMEOUT=60
+
+die() { echo "ni-daq vm: $*" >&2; exit 1; }
+
+state() { $VIRSH domstate "$VM" 2>/dev/null | head -1; }
+
+stopped() { [ "$(state)" != running ]; }
+
+grpc_up() {
+    # bash's own /dev/tcp -- no netcat dependency.
+    (exec 3<>"/dev/tcp/$IP/$PORT") 2>/dev/null
+}
+
+chassis_on_host() {
+    local d v
+    for d in /sys/bus/usb/devices/*/; do
+        v=$(cat "$d/idVendor" 2>/dev/null) || continue
+        [ "$v" = "3923" ] && return 0
+    done
+    return 1
+}
+
+wait_for() {
+    # wait_for <seconds> <description> <command...>
+    local timeout=$1 what=$2; shift 2
+    local i
+    printf '  waiting for %s' "$what"
+    for ((i = 0; i < timeout; i++)); do
+        if "$@"; then echo " ok (${i}s)"; return 0; fi
+        printf '.'
+        sleep 1
+    done
+    echo " TIMEOUT after ${timeout}s"
+    return 1
+}
+
+devices() {
+    # Ask the driver what it can see. Only possible once the client venv
+    # exists; the port being open does not prove the hardware is there.
+    [ -x "$VENV" ] || { echo "(no client venv -- run ./setup.sh client)"; return; }
+    "$VENV" - "$REPO" <<'PY' 2>/dev/null || echo "(could not reach the driver)"
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path(sys.argv[1]) / "client"))
+import ni_grpc
+print(ni_grpc.devices() or "[] -- server is up but sees no hardware")
+PY
+}
+
+qemu_pid() {
+    # The QEMU process libvirt started for this domain, if any. Matching on
+    # "guest=<vm>," rather than the domain name alone keeps this from picking
+    # up the shell that happens to mention it.
+    pgrep -f "qemu-system-[^ ]* -name guest=$VM," 2>/dev/null | head -1
+}
+
+usb_script_stale() {
+    # The reconcile script is installed to /usr/local/bin, so a fix that
+    # lands in the repo does nothing until `setup.sh udev` is re-run. That
+    # failure is silent and looks exactly like a hardware fault, so say so.
+    [ -r /usr/local/bin/ni-daq-usb ] || return 0
+    ! cmp -s "$REPO/host/ni-daq-usb" /usr/local/bin/ni-daq-usb
+}
+
+warn_if_stale() {
+    usb_script_stale || return 0
+    echo "  NOTE: /usr/local/bin/ni-daq-usb differs from host/ni-daq-usb." >&2
+    echo "        Re-install it with: ./setup.sh udev" >&2
+}
+
+devices_present() {
+    [ -x "$VENV" ] || return 1
+    "$VENV" - "$REPO" <<'PY' 2>/dev/null
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path(sys.argv[1]) / "client"))
+import ni_grpc
+sys.exit(0 if ni_grpc.devices() else 1)
+PY
+}
+
+cmd_up() {
+    case "$(state)" in
+        running) echo "already running" ;;
+        "")      die "domain '$VM' does not exist -- run ./setup.sh" ;;
+        *)       echo "starting $VM"
+                 $VIRSH start "$VM" >/dev/null || die "could not start $VM" ;;
+    esac
+
+    wait_for "$BOOT_TIMEOUT" "the gRPC server on $IP:$PORT" grpc_up \
+        || die "the VM booted but the gRPC server never came up -- try: ni-daq vm ssh 'systemctl status ni-grpc-device'"
+
+    # udev only fires on USB events, so a chassis that was already plugged in
+    # when the VM started is not attached to anything yet. Reconcile now.
+    if ! chassis_on_host; then
+        echo "  no NI chassis on this machine's USB -- plug it in and run: ni-daq vm attach"
+        return 0
+    fi
+
+    # The domain XML carries a <hostdev> per NI product id with
+    # startupPolicy='optional', so libvirt attaches whatever is plugged in as
+    # the domain starts -- no privileges needed. The guest driver then loads
+    # firmware, the chassis re-enumerates under its other id, and the udev
+    # rule re-attaches it. All of that takes a few seconds.
+    if wait_for 40 "the driver to see the hardware" devices_present; then
+        echo "devices: $(devices)"
+        return 0
+    fi
+
+    # Only if that did not happen -- a chassis plugged in mid-session, or a
+    # stale claim -- do we need the privileged reconcile.
+    warn_if_stale
+    echo "  not attached by libvirt; reconciling (needs sudo)"
+    sudo /usr/local/bin/ni-daq-usb attach || echo "  attach failed, see: ni-daq vm log"
+    sleep 3
+    echo "devices: $(devices)"
+}
+
+cmd_down() {
+    [ "$(state)" = "running" ] || { echo "not running"; return; }
+    echo "shutting down $VM"
+    $VIRSH shutdown "$VM" >/dev/null
+    if ! wait_for "$STOP_TIMEOUT" "a clean shutdown" stopped; then
+        echo "  still up after ${STOP_TIMEOUT}s, pulling the plug"
+        $VIRSH destroy "$VM" >/dev/null
+    fi
+}
+
+cmd_status() {
+    local s pid; s=$(state); pid=$(qemu_pid)
+    printf '%-12s %s\n' "domain" "${s:-does not exist}"
+
+    if [ "$s" != "running" ]; then
+        # Say what "down" actually means, rather than asking for trust in one
+        # word: no QEMU process, and nothing answering on the port.
+        if [ -n "$pid" ]; then
+            printf '%-12s WARNING: qemu still alive as pid %s\n' "process" "$pid"
+        else
+            printf '%-12s no qemu process -- its RAM is back\n' "process" 
+        fi
+        grpc_up && printf '%-12s something is STILL answering on %s:%s\n' \
+            "grpc" "$IP" "$PORT" \
+            || printf '%-12s nothing on %s:%s\n' "grpc" "$IP" "$PORT"
+        return 0
+    fi
+
+    if [ -n "$pid" ]; then
+        printf '%-12s pid %s, %s MB resident, up %s\n' "process" "$pid" \
+            "$(( $(ps -o rss= -p "$pid" 2>/dev/null || echo 0) / 1024 ))" \
+            "$(ps -o etime= -p "$pid" 2>/dev/null | tr -d ' ')"
+    fi
+
+    if grpc_up; then
+        printf '%-12s reachable on %s:%s\n' "grpc" "$IP" "$PORT"
+        printf '%-12s %s\n' "devices" "$(devices)"
+    else
+        printf '%-12s NOT reachable on %s:%s\n' "grpc" "$IP" "$PORT"
+    fi
+
+    if chassis_on_host; then
+        printf '%-12s present on host USB\n' "chassis"
+    else
+        printf '%-12s not plugged in\n' "chassis"
+    fi
+
+    if usb_script_stale; then
+        printf '%-12s /usr/local/bin/ni-daq-usb is stale -- ./setup.sh udev\n' "warning"
+    fi
+}
+
+cmd_attach() {
+    [ "$(state)" = "running" ] || die "the VM is not running -- ni-daq vm up"
+    chassis_on_host || die "no NI device on this machine's USB"
+    warn_if_stale
+    # Needs root: the reconcile script logs to /var/log and locks in /run.
+    sudo /usr/local/bin/ni-daq-usb attach || die "attach failed, see: ni-daq vm log"
+    sleep 2
+    echo "devices: $(devices)"
+}
+
+cmd_release() {
+    # A task whose client died keeps its session, and the hardware, on the
+    # server. Ask the server to reset itself: no ssh, no sudo, and it leaves
+    # the service -- and the VM's boot state -- alone.
+    [ "$(state)" = "running" ] || die "the VM is not running -- ni-daq vm up"
+    grpc_up || die "nothing answering on $IP:$PORT -- try: ni-daq vm reset"
+    [ -x "$VENV" ] || die "no client venv -- run ./setup.sh client"
+    echo "releasing every gRPC session on $IP:$PORT"
+    "$VENV" - "$REPO" <<'PY' || die "the server would not release its sessions -- try: ni-daq vm reset"
+import pathlib
+import sys
+
+sys.path.insert(0, str(pathlib.Path(sys.argv[1]) / "client"))
+import ni_grpc
+
+ni_grpc.release()
+PY
+    # Enumeration alone does not prove a session let go -- a reserved device
+    # still lists. Opening a task does.
+    echo "devices: $(devices)"
+    claim_check
+}
+
+claim_check() {
+    # Try to open a one-channel task. A reserved device still enumerates, so
+    # listing devices proves nothing -- only claiming one does.
+    "$VENV" - "$REPO" <<'PY'
+import pathlib
+import sys
+
+sys.path.insert(0, str(pathlib.Path(sys.argv[1]) / "client"))
+import ni_grpc
+from nidaqmx.constants import AcquisitionType, TaskMode
+from nidaqmx.errors import DaqError
+
+# The hardware is still held by an earlier session.
+RESERVED = {-50103, -200489, -50405}
+
+# The chassis itself carries no channels, and a bridge module rejects a
+# voltage channel for reasons that have nothing to do with reservation, so
+# walk the channels until one accepts the task or one says it is held.
+#
+# A delta-sigma module also refuses to reserve without a sample clock, and
+# only rates on its own grid are valid, so each candidate carries its
+# device's stated maximum -- the one rate always safe to ask for.
+candidates = [
+    (c.name, d.ai_max_single_chan_rate)
+    for d in ni_grpc.system().devices
+    for c in d.ai_physical_chans
+]
+if not candidates:
+    print("claim   : skipped -- no analog input on this chassis")
+    raise SystemExit(0)
+
+unsupported = []
+for name, rate in candidates:
+    try:
+        with ni_grpc.remote_task("ni_daq_claim_check") as task:
+            task.ai_channels.add_ai_voltage_chan(name)
+            task.timing.cfg_samp_clk_timing(
+                rate=rate,
+                sample_mode=AcquisitionType.FINITE,
+                samps_per_chan=1000,
+            )
+            # Adding a channel does not touch the hardware -- two tasks can
+            # name the same input quite happily. Reserving is what claims it,
+            # and therefore what an orphaned session refuses.
+            task.control(TaskMode.TASK_RESERVE)
+    except DaqError as exc:
+        if exc.error_code in RESERVED:
+            print(f"claim   : FAILED -- {name} is still held ({exc.error_code})")
+            raise SystemExit(1)
+        unsupported.append(name)
+        continue
+    print(f"claim   : ok -- {name} is free")
+    raise SystemExit(0)
+
+print(f"claim   : inconclusive -- none of the {len(unsupported)} channels took "
+      f"a voltage task, and none reported being held")
+PY
+}
+
+cmd_reset() {
+    [ "$(state)" = "running" ] || die "the VM is not running -- ni-daq vm up"
+    echo "restarting the gRPC server (drops every open session)"
+    ssh "$VM" 'sudo systemctl restart ni-grpc-device' || die "could not restart it"
+    wait_for 30 "the gRPC server" grpc_up
+    echo "devices: $(devices)"
+}
+
+main() {
+    # Reached as `ni-daq vm ...` through the native helper, or directly as ni-daq-vm.
+    [ "${1:-}" = vm ] && shift
+    local cmd=${1:-status}; shift || true
+    case "$cmd" in
+        up)      cmd_up ;;
+        down)    cmd_down ;;
+        status)  cmd_status ;;
+        attach)  cmd_attach ;;
+        release) cmd_release ;;
+        reset)   cmd_reset ;;
+        ssh)     exec ssh "$VM" "$@" ;;
+        log)     tail -"${1:-30}" /var/log/ni-daq-usb.log ;;
+        -h|--help|help)
+                 awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' \
+                     "$(readlink -f "${BASH_SOURCE[0]}")" ;;
+        *)       die "unknown command '$cmd' -- try: ni-daq vm help" ;;
+    esac
+}
+
+main "$@"

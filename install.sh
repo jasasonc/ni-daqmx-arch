@@ -3,6 +3,10 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/ladisk/ni-daqmx-arch/main/install.sh | bash
 #
+# Or set up the ni-daq VM instead (NI-DAQmx in an Ubuntu guest, reached over gRPC):
+#
+#   curl -fsSL https://raw.githubusercontent.com/ladisk/ni-daqmx-arch/main/install.sh | bash -s vm
+#
 # Set NI_DAQMX_ARCH_URL=/path/to/checkout to install from a local git repo instead of GitHub.
 
 set -eEo pipefail
@@ -10,10 +14,12 @@ set -eEo pipefail
 REPO_URL=${NI_DAQMX_ARCH_URL:-https://github.com/ladisk/ni-daqmx-arch.git}
 REPO=${NI_DAQMX_ARCH_REPO:-$HOME/.local/share/ni-daqmx-arch}
 VM_RULE=/etc/udev/rules.d/90-ni-daq-vm.rules
+TARGET=${1:-native}
+[[ $TARGET == native || $TARGET == vm ]] || { echo "Usage: install.sh [native|vm]" >&2; exit 1; }
 
 step() { printf '\n\e[1;34m==>\e[0m \e[1m%s\e[0m\n' "$*"; }
 die()  { printf '\e[31mError:\e[0m %s\n' "$*" >&2; exit 1; }
-trap 'die "install failed at line $LINENO. Run: ni-daqmx-arch doctor (if installed) or re-run this script."' ERR
+trap 'die "install failed at line $LINENO. Run: ni-daq doctor (if installed) or re-run this script."' ERR
 
 [[ $EUID -ne 0 ]] || die "run as your normal user, not root (sudo is used where needed)"
 command -v pacman >/dev/null || die "this installer is for Arch Linux and Arch-based distros"
@@ -26,6 +32,21 @@ sudo_keepalive() {
   while sleep 60; do sudo -n true 2>/dev/null || exit; kill -0 $$ 2>/dev/null || exit; done &
   trap "kill $! 2>/dev/null" EXIT
 }
+
+if [[ $TARGET == vm ]]; then
+  step "Asking for your sudo password once (the rest runs unattended, ~20-30 minutes)"
+  sudo_keepalive
+  sudo pacman -S --needed --noconfirm git
+  if [[ -d $REPO/.git ]]; then git -C "$REPO" pull --ff-only; else git clone "$REPO_URL" "$REPO"; fi
+  # The VM takes the chassis over USB. Stop the native services first, or both
+  # claim it at once (nidrum can then hang in the kernel until reboot).
+  [[ -x /usr/bin/ni-daq ]] && /usr/bin/ni-daq mode vm
+  step "Building the ni-daq VM (Ubuntu 24.04, NI-DAQmx, NI's gRPC server)"
+  "$REPO/vm/setup.sh"
+  step "Done. Log out and back in once (libvirt group), then: ni-daq vm up"
+  [[ -x /usr/bin/ni-daq ]] && echo "To use the hardware natively again: ni-daq mode native"
+  exit 0
+fi
 
 step "Asking for your sudo password once (the rest runs unattended, ~10 minutes)"
 sudo_keepalive
@@ -52,9 +73,9 @@ if command -v snapper >/dev/null; then
 fi
 
 step "Building and installing NI-DAQmx (downloads ~280 MB from ni.com, compiles 48 kernel modules)"
-"$REPO/ni-daqmx-arch/ni-daqmx-arch" update || true   # update ends with doctor, which explains any failure
+"$REPO/ni-daqmx-arch/ni-daq" update || true   # update ends with doctor, which explains any failure
 
 if [[ -f $VM_RULE ]]; then
   step "The ni-daq VM is set up to take NI USB devices"
-  echo "Leaving that as is. To use the hardware natively: ni-daqmx-arch mode native"
+  echo "Leaving that as is. To use the hardware natively: ni-daq mode native"
 fi
