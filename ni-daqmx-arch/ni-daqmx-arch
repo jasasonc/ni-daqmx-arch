@@ -59,9 +59,13 @@ cmd_doctor() {
 
   echo "Services"
   local u
-  for u in "${UNITS[@]}"; do
-    systemctl is-active -q $u && ok "$u running" || { bad "$u not running"; hint "journalctl -b -u $u"; }
-  done
+  if [[ -f $VM_RULE ]]; then
+    ok "stopped on purpose: the ni-daq VM has the hardware"
+  else
+    for u in "${UNITS[@]}"; do
+      systemctl is-active -q $u && ok "$u running" || { bad "$u not running"; hint "journalctl -b -u $u"; }
+    done
+  fi
 
   echo "Hardware"
   if [[ -f $VM_RULE ]]; then
@@ -76,6 +80,8 @@ cmd_doctor() {
   if (( FAILED )); then
     echo "Something is broken. Full details: $REPORT"
     echo "Hand that file to Claude (or open an issue) to get it fixed."
+  elif [[ -f $VM_RULE ]]; then
+    echo "All checks passed. To use the hardware here: ni-daqmx-arch mode native"
   else
     echo "All checks passed. Next: ni-daqmx-arch test"
   fi
