@@ -69,6 +69,7 @@ stage_image() {
 
 stage_vm() {
     say "Creating the VM"
+    [ -f "$KEY" ] || ssh-keygen -q -t ed25519 -N "" -C ni-daq-vm -f "$KEY"
     if sudo virsh dominfo "$VM" &>/dev/null; then
         echo "    '$VM' exists; use: host/02-create-vm.sh --recreate"
     else
