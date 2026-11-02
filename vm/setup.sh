@@ -52,6 +52,7 @@ stage_ufw() {
     say "Letting the guest network through ufw"
     # Omarchy enables ufw with default-deny incoming, which silently drops the
     # guest's DHCP. Must happen BEFORE the VM first boots.
+    command -v ufw >/dev/null || { echo "    ufw not installed, nothing to do"; return 0; }
     sudo ufw allow in on virbr0 to any port 67 proto udp comment 'libvirt DHCP'
     sudo ufw allow in on virbr0 to any port 53             comment 'libvirt DNS'
     sudo ufw route allow in on virbr0                      comment 'libvirt guest egress'
