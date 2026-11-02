@@ -187,6 +187,9 @@ cmd_update() {
 }
 
 cmd_mode() {
+  # Without sudo only the virsh steps would run, leaving the VM and NI's services
+  # fighting over the chassis.
+  [[ ${1:-} == native || ${1:-} == vm ]] && { sudo -v || exit 1; }
   case ${1:-} in
     native)
       [[ -f $VM_RULE ]] && sudo mv "$VM_RULE" "$VM_RULE.disabled"
