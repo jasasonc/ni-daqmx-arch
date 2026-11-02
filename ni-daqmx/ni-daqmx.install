@@ -23,7 +23,7 @@ post_install() {
   systemctl daemon-reload
   systemctl enable "${_units[@]/%/.service}" >/dev/null 2>&1
   echo ":: NI-DAQmx installed. Kernel modules are built by DKMS for every installed kernel."
-  echo ":: Reboot, or run 'ni-daqmx-arch start', then 'ni-daqmx-arch doctor'."
+  echo ":: Reboot, or run 'ni-daq start', then 'ni-daq doctor'."
 }
 
 post_upgrade() {

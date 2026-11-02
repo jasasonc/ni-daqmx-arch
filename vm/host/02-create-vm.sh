@@ -63,7 +63,7 @@ sudo virt-install \
 
 echo "==> Autostart at boot"
 # Deliberately NOT autostarted: the VM holds ~2 GB of RAM and is only useful
-# with the chassis plugged in. Bring it up with `ni-daq up` when measuring.
+# with the chassis plugged in. Bring it up with `ni-daq vm up` when measuring.
 sudo virsh autostart --disable "$VM" 2>/dev/null || true
 
 echo

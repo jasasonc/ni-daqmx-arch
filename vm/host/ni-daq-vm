@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
-# Start and stop the ni-daq measurement VM by hand.
+# Start and stop the ni-daq measurement VM by hand. Run as `ni-daq vm <command>`;
+# up, down and attach also work without the `vm`.
 #
 # The VM deliberately does NOT autostart: it holds ~2 GB of RAM and is only
 # useful when the NI chassis is plugged in. Bring it up when you want to
 # measure, drop it when you are done.
 #
-#   ni-daq up        start the VM, wait for the gRPC server, attach the chassis
-#   ni-daq down      shut it down cleanly
-#   ni-daq status    what is running, and does the driver see the hardware
-#   ni-daq attach    re-attach the chassis without restarting anything
-#   ni-daq release   drop orphaned gRPC sessions that still hold the hardware
-#   ni-daq reset     restart the gRPC server (heavier; use if it stops answering)
-#   ni-daq ssh       shell into the guest, or run a command there
-#   ni-daq log       tail the USB attach log
+#   ni-daq vm up        start the VM, wait for the gRPC server, attach the chassis
+#   ni-daq vm down      shut it down cleanly
+#   ni-daq vm status    what is running, and does the driver see the hardware
+#   ni-daq vm attach    re-attach the chassis without restarting anything
+#   ni-daq vm release   drop orphaned gRPC sessions that still hold the hardware
+#   ni-daq vm reset     restart the gRPC server (heavier; use if it stops answering)
+#   ni-daq vm ssh       shell into the guest, or run a command there
+#   ni-daq vm log       tail the USB attach log
 set -uo pipefail
 
 VM=ni-daq
@@ -24,7 +25,7 @@ VENV="$REPO/.venv/bin/python"
 BOOT_TIMEOUT=90
 STOP_TIMEOUT=60
 
-die() { echo "ni-daq: $*" >&2; exit 1; }
+die() { echo "ni-daq vm: $*" >&2; exit 1; }
 
 state() { $VIRSH domstate "$VM" 2>/dev/null | head -1; }
 
@@ -110,12 +111,12 @@ cmd_up() {
     esac
 
     wait_for "$BOOT_TIMEOUT" "the gRPC server on $IP:$PORT" grpc_up \
-        || die "the VM booted but the gRPC server never came up -- try: ni-daq ssh 'systemctl status ni-grpc-device'"
+        || die "the VM booted but the gRPC server never came up -- try: ni-daq vm ssh 'systemctl status ni-grpc-device'"
 
     # udev only fires on USB events, so a chassis that was already plugged in
     # when the VM started is not attached to anything yet. Reconcile now.
     if ! chassis_on_host; then
-        echo "  no NI chassis on this machine's USB -- plug it in and run: ni-daq attach"
+        echo "  no NI chassis on this machine's USB -- plug it in and run: ni-daq vm attach"
         return 0
     fi
 
@@ -133,7 +134,7 @@ cmd_up() {
     # stale claim -- do we need the privileged reconcile.
     warn_if_stale
     echo "  not attached by libvirt; reconciling (needs sudo)"
-    sudo /usr/local/bin/ni-daq-usb attach || echo "  attach failed, see: ni-daq log"
+    sudo /usr/local/bin/ni-daq-usb attach || echo "  attach failed, see: ni-daq vm log"
     sleep 3
     echo "devices: $(devices)"
 }
@@ -191,11 +192,11 @@ cmd_status() {
 }
 
 cmd_attach() {
-    [ "$(state)" = "running" ] || die "the VM is not running -- ni-daq up"
+    [ "$(state)" = "running" ] || die "the VM is not running -- ni-daq vm up"
     chassis_on_host || die "no NI device on this machine's USB"
     warn_if_stale
     # Needs root: the reconcile script logs to /var/log and locks in /run.
-    sudo /usr/local/bin/ni-daq-usb attach || die "attach failed, see: ni-daq log"
+    sudo /usr/local/bin/ni-daq-usb attach || die "attach failed, see: ni-daq vm log"
     sleep 2
     echo "devices: $(devices)"
 }
@@ -204,11 +205,11 @@ cmd_release() {
     # A task whose client died keeps its session, and the hardware, on the
     # server. Ask the server to reset itself: no ssh, no sudo, and it leaves
     # the service -- and the VM's boot state -- alone.
-    [ "$(state)" = "running" ] || die "the VM is not running -- ni-daq up"
-    grpc_up || die "nothing answering on $IP:$PORT -- try: ni-daq reset"
+    [ "$(state)" = "running" ] || die "the VM is not running -- ni-daq vm up"
+    grpc_up || die "nothing answering on $IP:$PORT -- try: ni-daq vm reset"
     [ -x "$VENV" ] || die "no client venv -- run ./setup.sh client"
     echo "releasing every gRPC session on $IP:$PORT"
-    "$VENV" - "$REPO" <<'PY' || die "the server would not release its sessions -- try: ni-daq reset"
+    "$VENV" - "$REPO" <<'PY' || die "the server would not release its sessions -- try: ni-daq vm reset"
 import pathlib
 import sys
 
@@ -283,7 +284,7 @@ PY
 }
 
 cmd_reset() {
-    [ "$(state)" = "running" ] || die "the VM is not running -- ni-daq up"
+    [ "$(state)" = "running" ] || die "the VM is not running -- ni-daq vm up"
     echo "restarting the gRPC server (drops every open session)"
     ssh "$VM" 'sudo systemctl restart ni-grpc-device' || die "could not restart it"
     wait_for 30 "the gRPC server" grpc_up
@@ -291,6 +292,8 @@ cmd_reset() {
 }
 
 main() {
+    # Reached as `ni-daq vm ...` through the native helper, or directly as ni-daq-vm.
+    [ "${1:-}" = vm ] && shift
     local cmd=${1:-status}; shift || true
     case "$cmd" in
         up)      cmd_up ;;
@@ -304,7 +307,7 @@ main() {
         -h|--help|help)
                  awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' \
                      "$(readlink -f "${BASH_SOURCE[0]}")" ;;
-        *)       die "unknown command '$cmd' -- try: ni-daq help" ;;
+        *)       die "unknown command '$cmd' -- try: ni-daq vm help" ;;
     esac
 }
 

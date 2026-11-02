@@ -4,7 +4,7 @@ Run National Instruments DAQ hardware from an Arch host by giving the driver
 its own kernel. This is the alternative to the native install in the
 [repository root](../README.md): use it when a new kernel breaks `nikal` before
 a patch exists, or to reach the hardware from another machine. With both
-installed, `ni-daqmx-arch mode native` / `mode vm` decides which one gets the
+installed, `ni-daq mode native` / `mode vm` decides which one gets the
 chassis.
 
 NI-DAQmx installs DKMS kernel modules and supports only RHEL, openSUSE and
@@ -48,21 +48,21 @@ The VM does not autostart -- it holds ~2 GB of RAM and is only useful with the
 chassis plugged in. Bring it up when you want to measure:
 
 ```bash
-ni-daq up        # when you want to measure
-ni-daq down      # when you are done
+ni-daq vm up        # when you want to measure
+ni-daq vm down      # when you are done
 ```
 
 | Command | What it does | Needs root? |
 |---|---|---|
-| `ni-daq up` | Starts the domain, waits for the gRPC server, waits for the driver to report devices. Falls back to the privileged reconcile only if libvirt did not attach the chassis itself. | no, on a cold start |
-| `ni-daq down` | Clean `virsh shutdown`, with a `destroy` only after 60 s. | no |
-| `ni-daq status` | Domain state, QEMU pid and resident RAM, gRPC reachability, visible devices, whether the chassis is on host USB, and a warning if the installed `ni-daq-usb` has drifted from the repo. This is the default — a bare `ni-daq` runs it. | no |
-| `ni-daq attach` | Reconciles the domain against whatever NI device is physically plugged in. For a chassis connected after the VM was already up. | sudo, on exactly `ni-daq-usb attach` |
-| `ni-daq release` | Asks the server to drop every gRPC session, then proves the hardware is actually free by reserving a channel — listing devices cannot tell a reserved chassis from a free one. | no |
-| `ni-daq reset` | Restarts `ni-grpc-device` in the guest. The heavier fallback for when the server stops answering; drops every open session. | sudo in the guest, over ssh |
-| `ni-daq ssh [cmd]` | Shell into the guest, or run one command there. | no |
-| `ni-daq log [n]` | Tails the last `n` (default 30) lines of `/var/log/ni-daq-usb.log`, the USB attach log. | no |
-| `ni-daq help` | Prints the command list from the script's own header. | no |
+| `ni-daq vm up` | Starts the domain, waits for the gRPC server, waits for the driver to report devices. Falls back to the privileged reconcile only if libvirt did not attach the chassis itself. | no, on a cold start |
+| `ni-daq vm down` | Clean `virsh shutdown`, with a `destroy` only after 60 s. | no |
+| `ni-daq vm status` | Domain state, QEMU pid and resident RAM, gRPC reachability, visible devices, whether the chassis is on host USB, and a warning if the installed `ni-daq-usb` has drifted from the repo. This is the default — a bare `ni-daq` runs it. | no |
+| `ni-daq vm attach` | Reconciles the domain against whatever NI device is physically plugged in. For a chassis connected after the VM was already up. | sudo, on exactly `ni-daq-usb attach` |
+| `ni-daq vm release` | Asks the server to drop every gRPC session, then proves the hardware is actually free by reserving a channel — listing devices cannot tell a reserved chassis from a free one. | no |
+| `ni-daq vm reset` | Restarts `ni-grpc-device` in the guest. The heavier fallback for when the server stops answering; drops every open session. | sudo in the guest, over ssh |
+| `ni-daq vm ssh [cmd]` | Shell into the guest, or run one command there. | no |
+| `ni-daq vm log [n]` | Tails the last `n` (default 30) lines of `/var/log/ni-daq-usb.log`, the USB attach log. | no |
+| `ni-daq vm help` | Prints the command list from the script's own header. | no |
 
 Then, from Python:
 
@@ -110,7 +110,7 @@ short, so it doubles as a smoke test after a reboot or a replug.
 | Path | What |
 |---|---|
 | `setup.sh` | orchestrator; run this |
-| `host/` | Arch-side: libvirt, VM creation, ufw, USB udev rule, the `ni-daq` command |
+| `host/` | Arch-side: libvirt, VM creation, ufw, USB udev rule, `ni-daq-vm` (run as `ni-daq vm`) |
 | `guest/` | Ubuntu-side: kernel pin, NI-DAQmx, gRPC server |
 | `cloud-init/` | first-boot identity and network config |
 | `client/` | `ni_grpc.py`, the client-side API, and the smoke test `setup.sh` runs |
@@ -128,18 +128,18 @@ releases.
 
 **The `<hostdev>` entries in the domain XML are load-bearing.** There is one
 per NI product id, each with `startupPolicy='optional'`, so libvirt attaches
-whatever is plugged in as the domain starts -- which is why a cold `ni-daq up`
+whatever is plugged in as the domain starts -- which is why a cold `ni-daq vm up`
 needs no privileges at all. They look like leftovers from the abandoned
 pin-the-product-id approach, and deleting them costs you the unprivileged
 attach. `startupPolicy` applies only at domain start, so a chassis plugged in
-mid-session still needs `ni-daq attach`.
+mid-session still needs `ni-daq vm attach`.
 
 **`virsh autostart` alone does not survive a reboot.** Arch enables only
 `libvirtd.socket`, not `libvirtd.service`, so libvirt starts on the first
 connection rather than at boot -- and guest autostart is something the daemon
 does when *it* starts. Marking the domain autostart therefore does nothing
 until you happen to run a `virsh` command. This repo does not rely on it: the
-domain is explicitly *not* autostarted and `ni-daq up` starts it on demand,
+domain is explicitly *not* autostarted and `ni-daq vm up` starts it on demand,
 which socket-activates libvirt on the way. If you ever do want it at boot, it
 needs `systemctl enable libvirtd.service`, not just the autostart flag.
 
@@ -159,12 +159,12 @@ re-attach.
 
 **Orphaned gRPC sessions hold the hardware.** A script that dies without closing
 its task leaves the session alive on the server. The next run fails with `-50103`
-(resource reserved) or `-200489` (channel already in task). Run `ni-daq release`,
+(resource reserved) or `-200489` (channel already in task). Run `ni-daq vm release`,
 or call `ni_grpc.release()`.
 
 Note what "holds" means: only a task that was *reserved or started* claims the
 hardware. A session that merely added channels blocks nothing, so two tasks can
-name the same input without complaint. `ni-daq release` checks by reserving,
+name the same input without complaint. `ni-daq vm release` checks by reserving,
 which is why it can tell a free chassis from a held one where listing devices
 cannot -- a reserved device still enumerates.
 

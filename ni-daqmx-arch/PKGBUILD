@@ -12,12 +12,14 @@ options=(!debug)
 url="https://github.com/ladisk/ni-daqmx-arch"
 license=(MIT)
 depends=(bash dkms usbutils)
-optdepends=('uv: ni-daqmx-arch test' 'libvirt: switching hardware to the ni-daq VM')
-source=(ni-daqmx-arch ni-daqmx.hook)
+optdepends=('uv: ni-daq test' 'libvirt: switching hardware to the ni-daq VM')
+source=(ni-daq ni-daqmx.hook)
 sha256sums=(SKIP SKIP)
 
 package() {
-  install -Dm755 ni-daqmx-arch "$pkgdir/usr/bin/ni-daqmx-arch"
+  install -Dm755 ni-daq "$pkgdir/usr/bin/ni-daq"
+  # The command's old name, kept so existing installs can run their next update.
+  ln -s ni-daq "$pkgdir/usr/bin/ni-daqmx-arch"
   install -Dm644 ni-daqmx.hook "$pkgdir/usr/share/libalpm/hooks/95-ni-daqmx.hook"
   install -Dm644 "$startdir/../LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

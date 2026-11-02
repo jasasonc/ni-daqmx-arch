@@ -19,8 +19,8 @@ sudo /usr/local/bin/ni-daq-usb attach
 echo "==> Log"
 sudo tail -20 /var/log/ni-daq-usb.log 2>/dev/null || echo "  (no log yet)"
 
-echo "==> Optional: passwordless 'ni-daq attach'"
-# A cold `ni-daq up` needs no privileges -- libvirt attaches the chassis from
+echo "==> Optional: passwordless 'ni-daq vm attach'"
+# A cold `ni-daq vm up` needs no privileges -- libvirt attaches the chassis from
 # the domain XML. This only removes the prompt when reconciling a chassis
 # plugged in mid-session. Validate before installing: a malformed file in
 # /etc/sudoers.d can lock you out of sudo entirely.

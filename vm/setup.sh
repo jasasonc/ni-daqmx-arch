@@ -123,11 +123,18 @@ stage_udev() {
 }
 
 stage_control() {
-    say "The ni-daq control command"
+    say "The ni-daq vm control command"
     mkdir -p "$HOME/.local/bin"
-    ln -sf "$PWD/host/ni-daq" "$HOME/.local/bin/ni-daq"
+    ln -sf "$PWD/host/ni-daq-vm" "$HOME/.local/bin/ni-daq-vm"
+    # The native install's /usr/bin/ni-daq dispatches `ni-daq vm ...` to ni-daq-vm.
+    # Without it, ni-daq is ni-daq-vm itself, which accepts the same `vm` word.
+    if [ -x /usr/bin/ni-daq ]; then
+        [ -L "$HOME/.local/bin/ni-daq" ] && rm "$HOME/.local/bin/ni-daq"
+    else
+        ln -sf "$PWD/host/ni-daq-vm" "$HOME/.local/bin/ni-daq"
+    fi
     case ":$PATH:" in
-        *":$HOME/.local/bin:"*) echo "    ni-daq -> $HOME/.local/bin/ni-daq" ;;
+        *":$HOME/.local/bin:"*) echo "    ni-daq vm -> $HOME/.local/bin/ni-daq-vm" ;;
         *) echo "    installed, but $HOME/.local/bin is not on your PATH" ;;
     esac
 }
