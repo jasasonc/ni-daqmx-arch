@@ -1,14 +1,17 @@
-# ni-daq-vm
+# ni-daq VM
 
-Run National Instruments DAQ hardware from a Linux distribution NI does not
-support, by giving the driver its own kernel.
+Run National Instruments DAQ hardware from an Arch host by giving the driver
+its own kernel. This is the alternative to the native install in the
+[repository root](../README.md): use it when a new kernel breaks `nikal` before
+a patch exists, or to reach the hardware from another machine. With both
+installed, `ni-daqmx-arch mode native` / `mode vm` decides which one gets the
+chassis.
 
 NI-DAQmx installs DKMS kernel modules and supports only RHEL, openSUSE and
-Ubuntu LTS, on a narrow band of kernel versions. That rules out Arch, and it
-means a bare-metal install holds your machine's kernel hostage to NI's release
-schedule. This puts NI-DAQmx in a headless Ubuntu VM that owns the USB hardware,
-and exposes it over NI's own gRPC device server. Your Python stays on the host,
-with no NI software installed there at all.
+Ubuntu LTS, on a narrow band of kernel versions. This puts NI-DAQmx in a
+headless Ubuntu VM that owns the USB hardware, and exposes it over NI's own
+gRPC device server. Your Python stays on the host, with no NI software
+installed there at all.
 
 ```
 Arch host                                Ubuntu 24.04 VM (headless)
@@ -27,7 +30,7 @@ NI-9232, acquiring through LDAQ at 25.6 kHz.
 ## Install
 
 ```bash
-git clone <this repo> && cd ni-daq-vm
+git clone https://github.com/ladisk/ni-daqmx-arch && cd ni-daqmx-arch/vm
 ./setup.sh
 ```
 

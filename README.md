@@ -73,7 +73,7 @@ ni-daqmx-arch test       # list NI devices through Python's nidaqmx
 | `start` | Loads the kernel modules and starts NI's services without a reboot. |
 | `build-modules` | Builds any NI modules still missing, for every installed kernel. |
 | `rebuild` | Force-rebuilds all NI modules for the running kernel. |
-| `mode native` / `mode vm` | Switches NI USB hardware between this machine and the [ni-daq-vm](https://github.com/klemengit/ni-daq-vm) virtual machine, if you also use that. |
+| `mode native` / `mode vm` | Switches NI USB hardware between this machine and the [ni-daq VM](#alternative-ni-daqmx-in-a-vm), if you also use that. |
 | `uninstall` | Removes both packages and the state they created. |
 
 Python code uses the standard `nidaqmx` package; nothing here changes its API.
@@ -99,6 +99,15 @@ them for every installed kernel, so a patch must not break older kernels: guard
 interface changes with `#if LINUX_VERSION_CODE >= KERNEL_VERSION(...)`, as
 `nikal.c` itself does.
 
+## Alternative: NI-DAQmx in a VM
+
+[`vm/`](vm/README.md) runs NI-DAQmx in a headless Ubuntu 24.04 VM that owns the
+USB chassis, and your Python on the host talks to it over NI's gRPC device
+server. No NI software is installed on the host. Use it as a fallback when a
+new kernel breaks `nikal` before a patch exists, or to reach the hardware from
+another machine. Both can be installed side by side; `ni-daqmx-arch mode
+native` / `mode vm` decides which one gets the chassis.
+
 ## Repository layout
 
 | Path | What it is |
@@ -108,6 +117,7 @@ interface changes with `#if LINUX_VERSION_CODE >= KERNEL_VERSION(...)`, as
 | `ni-daqmx-arch/` | The helper command and the pacman hook. A separate package, so changing it never rebuilds the kernel modules. |
 | `tools/update-sources` | Pins an NI release into `ni-daqmx/PKGBUILD`. |
 | `keys/` | NI's public package-signing key. |
+| `vm/` | The VM alternative: its own `setup.sh`, host and guest scripts, and the `ni-daq` command. |
 
 ### Moving to a newer NI release
 
