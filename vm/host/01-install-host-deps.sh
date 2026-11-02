@@ -3,7 +3,8 @@
 # Idempotent — safe to re-run.
 set -euo pipefail
 
-PKGS=(qemu-desktop libvirt virt-install virt-manager dnsmasq edk2-ovmf libisoburn openbsd-netcat)
+PKGS=(qemu-desktop libvirt virt-install virt-manager dnsmasq edk2-ovmf libisoburn openbsd-netcat
+      openssh curl uv)
 
 echo "==> Installing packages"
 sudo pacman -S --needed --noconfirm "${PKGS[@]}"
